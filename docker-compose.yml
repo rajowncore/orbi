@@ -1,0 +1,140 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - orbi_data:/app/data
+    environment:
+      #- DATABASE_URL=sqlite+aiosqlite:////app/data/orbi.db
+      # NEW Postgres DB
+      - DATABASE_URL=postgresql+asyncpg://postgres:pass@db:5432/orbi
+      - DB_ECHO=false  # Useful for dev to see the SQL Postgres is running
+      - REDIS_URL=redis://redis:6379/0
+      - CGRATES_URL=http://cgrates:2080
+      - DEBUG=true
+    
+    #command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Switched to Gunicorn for multi-worker support (distributed testing)
+    command: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app 
+      --bind 0.0.0.0:8000 
+      --timeout 120 
+      --reload
+      --access-logfile -
+      --error-logfile -
+      --log-level info
+    depends_on:
+      - db
+      - redis
+      - cgrates
+    networks:
+      - orbi-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    image: node:20-alpine
+    environment:
+      - VITE_API_URL=http://backend:8000
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - orbi-net
+
+  # NEW: The Postgres Service
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=orbi
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - orbi-net
+
+  # NEW: Redis for tracking Saga state across Gunicorn workers
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - orbi-net
+  
+  cgr-db:
+    image: mysql:8.0
+    container_name: cgr-db
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: cgrates
+      MYSQL_USER: cgrates
+      MYSQL_PASSWORD: cgrates
+    volumes:
+      - cgr_db_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      # Note: mysqladmin still works the same for healthchecks in MySQL
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ppassword"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - orbi-net
+
+  # NEW: CGRateS (The Engine)
+  cgrates:
+    image: dkr.cgrates.org/master/cgr-engine:latest
+    container_name: cgrates
+    ports:
+      - "2012:2012"
+      - "2080:2080"
+    volumes:
+      - ./cgrates_config/cgrates:/etc/cgrates
+    command: ["cgr-engine", "-config_path=/etc/cgrates/", "-log_level=7"]
+    depends_on:
+      cgr-db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - orbi-net 
+    restart: unless-stopped
+
+  # Optional: Tool to talk to the engine from the command line
+  cgr-console:
+    image: dkr.cgrates.org/master/cgr-console:latest
+    container_name: orbi-cgr-console-1
+    # This overrides the entrypoint and command correctly
+    entrypoint: ["cgr-console", "-server=cgrates:2012"]
+    tty: true
+    stdin_open: true
+    depends_on:
+      - cgrates
+    networks:
+      - orbi-net 
+
+networks:
+  orbi-net:
+    driver: bridge
+
+volumes:
+  orbi_data:
+  postgres_data: # New persistent volume for Postgres
+  cgr_db_data:

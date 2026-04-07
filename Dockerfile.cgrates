@@ -1,0 +1,29 @@
+###############################################################################
+# NOT used in current setup, but can be used to build a custom image if needed
+###############################################################################
+
+# Stage 1: Get the engine
+FROM dkr.cgrates.org/master/cgr-engine:latest AS engine_img
+
+# Stage 2: Get the migrator
+FROM dkr.cgrates.org/master/cgr-migrator:latest AS migrator_img
+
+# Stage 3: Build the actual container
+FROM debian:bookworm-slim
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    libc6 libmariadb3 ca-certificates procps net-tools curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binaries from the stages above
+COPY --from=engine_img /usr/bin/cgr-engine /usr/bin/cgr-engine
+COPY --from=migrator_img /usr/bin/cgr-migrator /usr/bin/cgr-migrator
+
+# Create config directory
+RUN mkdir -p /etc/cgrates
+
+# Temporary: Sleep so we can run the migration manually
+#ENTRYPOINT ["sleep", "infinity"]
+
+ENTRYPOINT ["cgr-engine", "-config_path=/etc/cgrates/", "-log_level=7"]

@@ -1,0 +1,82 @@
+{
+  "general": {
+    "node_id": "orbi_node",
+    "logger": "*stdout",
+    "log_level": 7
+  },
+  "listen": {
+    "http": "0.0.0.0:2080",
+    "http_tls": "0.0.0.0:2280",
+    "rpc_gob": "0.0.0.0:2013",
+    "rpc_gob_tls": "0.0.0.0:2023",
+    "rpc_json": "0.0.0.0:2012",
+    "rpc_json_tls": "0.0.0.0:2022"
+  },
+  "data_db": {
+    "db_type": "*redis",
+    "db_host": "redis",
+    "db_port": 6379,
+    "db_name": "10"
+  },
+  "stor_db": {
+    "db_type": "*mysql",
+    "db_host": "cgr-db",
+    "db_port": 3306,
+    "db_name": "cgrates",
+    "db_user": "cgrates",
+    "db_password": "cgrates"
+  },
+  "loaders": [
+    { 
+      "enabled": false
+    }
+  ],
+  "cdrs": {
+      "enabled": true,
+      "store_raw": true
+  },
+  "history": [
+    { "enabled": true }
+  ],
+  "sessions": { 
+    "enabled": true 
+  },
+  "rals": {
+    "enabled": true,
+    "thresholds_conns": ["*localhost"],
+    "sessions_conns": ["*localhost"]
+  },
+
+  "schedulers": {
+    "enabled": true				
+  },
+  "resources": {
+    "enabled": true,
+    "indexed_selects":false,					
+    "store_interval": "1s"
+  },
+  "stats": {
+    "enabled": true,
+    "indexed_selects":false,					
+    "store_interval": "1s"
+  },
+  "thresholds": {
+    "enabled": true,
+    "indexed_selects":false,					
+    "store_interval": "1s"
+  },
+  "attributes": {
+    "enabled": true
+  },
+  "chargers": {
+    "enabled": true,
+    "suffix_indexed_fields": ["*req.Subject"],
+    "attributes_conns": ["*internal"]
+  },
+
+  "apiers": {
+    "enabled": true,
+    "caches_conns":["*localhost"],
+    "scheduler_conns": ["*internal"]
+  }
+}
