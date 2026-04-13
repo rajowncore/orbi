@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'											  
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
 import { products as productsApi, orders as ordersApi, inventory as inventoryApi, invoices as invoicesApi, usage as usageApi, payments as paymentsApi, billingRuns } from '../lib/api'
 import { fmt, statusBadge } from '../lib/utils'
 import { LoadingRows, Empty, ErrorBanner, PageHeader, Confirm, Modal } from '../components/ui'
+import { Pagination } from '../components/ui/Pagination'
+import { usePagination } from '../hooks/usePagination'														
 import { ProvisioningMonitor } from '../components/ProvisioningPanel'																	 
 import { CreateProductModal } from '../components/modals/CreateProductModal'
 import { CreateOrderModal } from '../components/modals/CreateOrderModal'
@@ -111,9 +113,11 @@ function EditProductModal({ product, onClose }) {
 
 // ── PRODUCTS ──────────────────────────────────────────────────────────────
 export function ProductsPage() {
+  const nav = useNavigate()						   
   const [showCreate, setShowCreate] = useState(false)
   const [editProduct, setEditProduct] = useState(null)
   const { data = [], isLoading } = useQuery({ queryKey: ['products'], queryFn: () => productsApi.list() })
+  const pg = usePagination(data, 10)									
 
   const typePill = (type) => {
     const styles = { base: 'chip', addon: 'text-xs bg-amber-50 border border-amber-200 text-amber-700 px-2 py-0.5 rounded-full', roaming: 'text-xs bg-sky-50 border border-sky-200 text-sky-700 px-2 py-0.5 rounded-full' }
@@ -140,9 +144,9 @@ export function ProductsPage() {
             </tr></thead>
             <tbody>
               {isLoading ? <LoadingRows cols={6}/> : data.length === 0 ? (
-                <tr><td colSpan={6}><Empty title="No products yet" sub="Create your first package"/></td></tr>
-              ) : data.map(p => (
-                <tr key={p.id} className="table-row">
+                <tr><td colSpan={7}><Empty title="No products yet" sub="Create your first package"/></td></tr>
+              ) : pg.paged.map(p => (
+                <tr key={p.id} className="table-row" onClick={() => nav(`/products/${p.id}`)}>
                   <td className="table-td">
                     <div className="font-medium">{p.name}</div>
                     {p.description && <div className="text-xs text-slate-400">{p.description}</div>}
@@ -166,6 +170,7 @@ export function ProductsPage() {
             </tbody>
           </table>
         </div>
+		<Pagination page={pg.page} totalPages={pg.totalPages} totalItems={pg.totalItems} pageSize={pg.pageSize} setPage={pg.setPage}/>
       </div>
       {showCreate && <CreateProductModal onClose={() => setShowCreate(false)}/>}
       {editProduct && <EditProductModal product={editProduct} onClose={() => setEditProduct(null)}/>}
@@ -175,13 +180,14 @@ export function ProductsPage() {
 
 // ── ORDERS ────────────────────────────────────────────────────────────────
 export function OrdersPage() {
+  const nav = useNavigate()		
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
   const [confirm, setConfirm] = useState(null)
 
   const { data = [], isLoading } = useQuery({ queryKey: ['orders'], queryFn: ordersApi.list })
-
+  const pg = usePagination(data, 10)
   const actionMut = useMutation({
     mutationFn: ({ id, action }) => ordersApi.action(id, action),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['orders'] }); setConfirm(null) }
@@ -216,8 +222,8 @@ export function OrdersPage() {
             <tbody>
               {isLoading ? <LoadingRows cols={6}/> : filtered.length === 0 ? (
                 <tr><td colSpan={6}><Empty title="No orders found"/></td></tr>
-              ) : filtered.map(o => (
-                <tr key={o.id} className="table-row">
+              ) : pg.paged.map(o => (
+                <tr key={o.id} className="table-row" onClick={e => { if (e.target.tagName==='BUTTON') return; nav(`/orders/${o.id}`) }}>
                   <td className="table-td font-mono text-xs text-slate-500">{o.order_number}</td>
                   <td className="table-td text-xs text-slate-400">{o.customer_id?.slice(0,8)}…</td>
                   <td className="table-td"><span className={`badge ${statusBadge(o.status)}`}>{o.status}</span></td>
@@ -241,6 +247,7 @@ export function OrdersPage() {
             </tbody>
           </table>
         </div>
+		<Pagination page={pg.page} totalPages={pg.totalPages} totalItems={pg.totalItems} pageSize={pg.pageSize} setPage={pg.setPage}/>
       </div>
 
       {showCreate && <CreateOrderModal onClose={() => setShowCreate(false)}/>}
@@ -260,13 +267,28 @@ export function InventoryPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [typeFilter, setTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
-
+  const nav = useNavigate()	
   const { data = [], isLoading } = useQuery({ queryKey: ['inventory'], queryFn: inventoryApi.list })
-
+  
+  const [selected, setSelected] = useState(new Set());
+  const [bulkLoading , setBulkLoading] = useState(new Set());
+  
   const filtered = data.filter(i => {
     return (!typeFilter || i.type === typeFilter) && (!statusFilter || i.status === statusFilter)
   })
+  const pg = usePagination(filtered, 15)
 
+    const toggleSelect = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleAll   = () => setSelected(s => s.size === pg.paged.length ? new Set() : new Set(pg.paged.map(i => i.id)))
+
+  const bulkRelease = async () => {
+    setBulkLoading(true)
+    try {
+      await Promise.all([...selected].map(id => inventoryApi.update(id, { status: 'available' })))
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+      setSelected(new Set())
+    } finally { setBulkLoading(false) }
+  }																																													 
   const stats = {
     msisdn:    data.filter(i => i.type === 'msisdn'),
     sim:       data.filter(i => i.type === 'sim'),
@@ -314,6 +336,11 @@ export function InventoryPage() {
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead><tr>
+			  <th className="table-th" style={{width:40}}>
+                <input type="checkbox" className="rounded"
+                  checked={selected.size===pg.paged.length && pg.paged.length>0}
+                  onChange={toggleAll}/>
+              </th>											  
               <th className="table-th">Type</th>
               <th className="table-th">Value</th>
               <th className="table-th">Status</th>
@@ -323,8 +350,22 @@ export function InventoryPage() {
             <tbody>
               {isLoading ? <LoadingRows cols={5}/> : filtered.length === 0 ? (
                 <tr><td colSpan={5}><Empty title="No inventory items" sub="Import MSISDNs or SIM cards to get started"/></td></tr>
-              ) : filtered.map(i => (
-                <tr key={i.id} className="table-row">
+              ) : pg.paged.map(i => (
+                <tr key={i.id} className={`table-row ${selected.has(i.id)?'bg-brand-50':''}`}
+                  onClick={e => { if (e.target.type==='checkbox') return; nav(`/inventory/${i.id}`) }}>
+                  <td className="table-td" onClick={e=>e.stopPropagation()}>
+                    <input type="checkbox" className="rounded"
+                      checked={selected.has(i.id)} onChange={()=>toggleSelect(i.id)}/>
+                  </td>
+				  {selected.size > 0 && (
+					  <div className="flex items-center gap-3 px-4 py-2.5 bg-brand-50 border-t border-brand-100">
+						<span className="text-sm text-brand-700 font-medium">{selected.size} item{selected.size>1?'s':''} selected</span>
+						<button className="btn btn-ghost btn-sm" onClick={bulkRelease} disabled={bulkLoading}>
+						  {bulkLoading ? 'Releasing…' : 'Release to available'}
+						</button>
+						<button className="btn btn-ghost btn-sm text-slate-500" onClick={()=>setSelected(new Set())}>Clear</button>
+					  </div>
+					)}																					   
                   <td className="table-td"><span className="chip">{i.type}</span></td>
                   <td className="table-td font-mono text-sm">{i.value}</td>
                   <td className="table-td"><span className={`badge ${statusBadge(i.status)}`}>{i.status}</span></td>
@@ -335,6 +376,16 @@ export function InventoryPage() {
             </tbody>
           </table>
         </div>
+		{selected.size > 0 && (
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-brand-50 border-t border-brand-100">
+            <span className="text-sm text-brand-700 font-medium">{selected.size} item{selected.size>1?'s':''} selected</span>
+            <button className="btn btn-ghost btn-sm" onClick={bulkRelease} disabled={bulkLoading}>
+              {bulkLoading ? 'Releasing…' : 'Release to available'}
+            </button>
+            <button className="btn btn-ghost btn-sm text-slate-500" onClick={()=>setSelected(new Set())}>Clear</button>
+          </div>
+        )}					   
+		<Pagination page={pg.page} totalPages={pg.totalPages} totalItems={pg.totalItems} pageSize={pg.pageSize} setPage={pg.setPage}/>
       </div>
       {showAdd && <AddInventoryModal onClose={() => setShowAdd(false)}/>}
     </div>
@@ -346,7 +397,7 @@ export function InvoicesPage() {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
   const [showRun, setShowRun] = useState(false)
-
+  const nav = useNavigate()	
   const { data = [], isLoading } = useQuery({ queryKey: ['invoices'], queryFn: () => invoicesApi.list()})
 
   const finaliseMut = useMutation({
@@ -360,6 +411,7 @@ export function InvoicesPage() {
   })
 
   const filtered = statusFilter ? data.filter(i => i.status === statusFilter) : data
+  const pg = usePagination(filtered, 10)										   
 
   return (
     <div className="flex-1 overflow-y-auto p-6 fade-in">
@@ -388,8 +440,8 @@ export function InvoicesPage() {
             <tbody>
               {isLoading ? <LoadingRows cols={6}/> : filtered.length === 0 ? (
                 <tr><td colSpan={6}><Empty title="No invoices yet" sub="Run a billing cycle to generate invoices"/></td></tr>
-              ) : filtered.map(inv => (
-                <tr key={inv.id} className="table-row">
+              ) : pg.paged.map(inv => (
+                <tr key={inv.id} className="table-row" onClick={() => nav(`/invoices/${inv.id}`)}>
                   <td className="table-td font-mono text-xs text-slate-500">{inv.invoice_number}</td>
                   <td className="table-td text-xs text-slate-400">{inv.customer_id?.slice(0,8)}…</td>
                   <td className="table-td text-xs text-slate-400">{fmt.date(inv.period_start)} – {fmt.date(inv.period_end)}</td>
@@ -416,6 +468,7 @@ export function InvoicesPage() {
             </tbody>
           </table>
         </div>
+		  <Pagination page={pg.page} totalPages={pg.totalPages} totalItems={pg.totalItems} pageSize={pg.pageSize} setPage={pg.setPage}/>
       </div>
 
       {showRun && (
@@ -456,10 +509,12 @@ export function UsagePage() {
   const [dragOver, setDragOver] = useState(false)
   const qc = useQueryClient()
 
+  const nav = useNavigate()						   
   const { data: events = [], isLoading } = useQuery({
     queryKey: ['usage-events', msisdnFilter],
     queryFn: () => usageApi.list(msisdnFilter ? { msisdn: msisdnFilter } : {})
   })
+  const pgEv = usePagination(events, 15)										
 
   const { data: rejected = [] } = useQuery({ queryKey: ['rejected'], queryFn: usageApi.rejected })
 
@@ -548,8 +603,8 @@ export function UsagePage() {
             <tbody>
               {isLoading ? <LoadingRows cols={6}/> : events.length === 0 ? (
                 <tr><td colSpan={6}><Empty title="No usage events" sub="Upload a CDR file or send events via API"/></td></tr>
-              ) : events.map(e => (
-                <tr key={e.id} className="table-row">
+              ) : pgEv.paged.map(e => (
+                <tr key={e.id} className="table-row" onClick={() => nav(`/usage/${e.id}`)}>
                   <td className="table-td font-mono text-xs">{e.msisdn}</td>
                   <td className="table-td">{typeBadge(e.event_type)}</td>
                   <td className="table-td font-mono text-xs">{e.quantity} {e.unit}</td>
@@ -561,6 +616,7 @@ export function UsagePage() {
             </tbody>
           </table>
         </div>
+		<Pagination page={pgEv.page} totalPages={pgEv.totalPages} totalItems={pgEv.totalItems} pageSize={pgEv.pageSize} setPage={pgEv.setPage}/>
       </div>
     </div>
   )
@@ -569,7 +625,9 @@ export function UsagePage() {
 // ── PAYMENTS ──────────────────────────────────────────────────────────────
 export function PaymentsPage() {
   const [showCreate, setShowCreate] = useState(false)
+  const nav = useNavigate()
   const { data = [], isLoading } = useQuery({ queryKey: ['payments'], queryFn: () => paymentsApi.list() })
+  const pgPay = usePagination(data, 10)
 
   return (
     <div className="flex-1 overflow-y-auto p-6 fade-in">
@@ -590,8 +648,8 @@ export function PaymentsPage() {
             <tbody>
               {isLoading ? <LoadingRows cols={6}/> : data.length === 0 ? (
                 <tr><td colSpan={6}><Empty title="No payments recorded" sub="Record a payment against an invoice or as a top-up"/></td></tr>
-              ) : data.map(p => (
-                <tr key={p.id} className="table-row">
+              ) : pgPay.paged.map(p => (
+                <tr key={p.id} className="table-row" onClick={() => nav(`/payments/${p.id}`)}>
                   <td className="table-td text-xs text-slate-400">{p.customer_id?.slice(0,8)}…</td>
                   <td className="table-td font-mono">{fmt.money(p.amount, p.currency)}</td>
                   <td className="table-td"><span className="chip">{p.method}</span></td>
@@ -603,6 +661,7 @@ export function PaymentsPage() {
             </tbody>
           </table>
         </div>
+		<Pagination page={pgPay.page} totalPages={pgPay.totalPages} totalItems={pgPay.totalItems} pageSize={pgPay.pageSize} setPage={pgPay.setPage}/>
       </div>
       {showCreate && <RecordPaymentModal onClose={() => setShowCreate(false)}/>}
     </div>

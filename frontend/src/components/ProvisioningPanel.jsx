@@ -4,6 +4,7 @@
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'											  
 import { provisioning as provApi } from '../lib/api'
 import { fmt, statusBadge } from '../lib/utils'
 import { Spinner, Confirm } from './ui'
@@ -85,14 +86,14 @@ function WorkflowCard({ orderId, orderNumber }) {
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-medium text-slate-700">{orderNumber}</div>
-            <div className="text-xs text-slate-400 mt-0.5">Not provisioned</div>
+            <div className="text-xs text-slate-400 mt-0.5">Not provisioned — will trigger automatically on activation</div>
           </div>
-          <button
+          {/* <button
             className="btn btn-primary btn-sm"
             disabled={provisionMut.isPending}
             onClick={() => setConfirm({ type: 'provision' })}>
             {provisionMut.isPending ? <><Spinner size={12}/> Provisioning…</> : '▶ Provision'}
-          </button>
+          </button> */}
         </div>
         {provisionMut.error && (
           <div className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -150,13 +151,13 @@ function WorkflowCard({ orderId, orderNumber }) {
             </div>
           )}
 
-          {canRetry && (
+          {/* {canRetry && (
             <button className="btn btn-primary btn-sm"
               disabled={provisionMut.isPending}
               onClick={e => { e.stopPropagation(); setConfirm({ type: 'retry' }) }}>
               ↺ Retry
             </button>
-          )}
+          )} */}
           {canDeprov && (
             <button className="btn btn-danger btn-sm"
               disabled={deprovisionMut.isPending}
@@ -332,8 +333,9 @@ export function ProvisioningPanel({ orders = [] }) {
 // ── Global provisioning monitor — shown on Orders page ────────────────────
 
 export function ProvisioningMonitor() {
+  const nav = useNavigate()					   
   const [statusFilter, setStatusFilter] = useState('')
-
+  
   const { data: workflows = [], isLoading } = useQuery({
     queryKey: ['provisioning-all', statusFilter],
     queryFn:  () => provApi.listWorkflows(statusFilter || undefined),
@@ -391,7 +393,7 @@ export function ProvisioningMonitor() {
                 ? new Date(wf.completed_at) - new Date(wf.created_at) : null
 
               return (
-                <tr key={wf.id} className="table-row">
+                <tr key={wf.id} className="table-row" onClick={() => nav(`/provisioning/${wf.order_id}`)}>
                   <td className="table-td font-mono text-xs text-slate-500">
                     {wf.order_id?.slice(0, 8)}…
                   </td>

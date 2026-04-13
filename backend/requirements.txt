@@ -82,3 +82,4 @@ yarl==1.23.0
 zopfli==0.4.1
 asyncpg
 gunicorn
+apscheduler>=3.10.0

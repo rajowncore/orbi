@@ -68,7 +68,7 @@ services:
     networks:
       - orbi-net
 
-  # NEW: Redis for tracking Saga state across Gunicorn workers
+  # NEW: StorDB for CGRateS (Redis)
   redis:
     image: redis:7-alpine
     ports:

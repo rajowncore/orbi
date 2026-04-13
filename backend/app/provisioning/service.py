@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload                                       
 
 from app.config import settings
-from app.models import Order, Subscription, InventoryItem, Product, Customer
+from app.models import BundleBalance, ServiceType, Order, Subscription, SubscriptionStatus, InventoryItem, Product, Customer
 from app.provisioning.adapters import OmniHSSAdapter, CGRatesAdapter
 from app.provisioning.runner import WorkflowRunner
 from app.provisioning.models import ProvisioningWorkflow
@@ -45,12 +45,7 @@ async def trigger_provision(
     db: AsyncSession,
     order: Order,
 ) -> ProvisioningWorkflow | None:
-    """
-    Trigger provisioning workflow after order activation.
-    Called by order service after subscription is created.
 
-    Returns None if provisioning is not configured (dev mode).
-    """
     runner = _get_runner()
     if not runner:
         log.info(f"Provisioning not configured — skipping for order {order.order_number}")
@@ -67,11 +62,94 @@ async def trigger_provision(
 
     if workflow.status == WorkflowStatus.COMPLETED:
         log.info(f"✓ Provisioning complete for {order.order_number}")
-    elif workflow.status in (WorkflowStatus.ROLLED_BACK, WorkflowStatus.FAILED):
+        # Now safe to create subscription — network is provisioned
+        await _ensure_subscription(db, order, workflow.context)
+    else:
         log.error(f"✗ Provisioning failed for {order.order_number}: {workflow.error_message}")
+        # Rollback order status back to pending so operator can retry
+        # Re-fetch order in same session to avoid stale object
+        r = await db.execute(select(Order).where(Order.id == order.id))
+        db_order = r.scalar_one_or_none()
+        if db_order:
+            from app.models import OrderStatus
+            order.status = OrderStatus.PENDING
+            order.activated_at = None
+            await db.flush()
+            log.warning(f"Order {order.order_number} reverted to pending after provisioning failure")
 
     return workflow
 
+async def _ensure_subscription(db: AsyncSession, order: Order, context: dict) -> None:
+    """
+    Create subscription after successful provisioning.
+    Called only when provisioning is configured and completes successfully.
+    Skips if subscription already exists (idempotent).
+    """
+    from datetime import date, datetime
+    # from app.models import (
+    #     Subscription, SubscriptionStatus, Product,
+    #     Customer, CreditType, BundleBalance, ServiceType,
+    #     BalanceLedger, LedgerEntryType,
+    # )
+    #from sqlalchemy import select
+    from calendar import monthrange
+    import uuid
+
+    # Check if subscription already exists
+    existing_r = await db.execute(
+        select(Subscription).where(Subscription.order_id == order.id)
+    )
+    if existing_r.scalar_one_or_none():
+        log.info(f"Subscription already exists for order {order.id}")
+        return  # already created
+
+    now   = datetime.utcnow()
+    today = now.date()
+    year, month = today.year, today.month
+    last_day = monthrange(year, month)[1]
+    period_end = date(year, month, last_day)
+
+    prod_r = await db.execute(select(Product).where(Product.id == order.product_id))
+    product = prod_r.scalar_one_or_none()
+
+    sub = Subscription(
+        id=str(uuid.uuid4()),
+        order_id=order.id,
+        customer_id=order.customer_id,
+        product_id=order.product_id,
+        quantity="1",
+        start_date=today,
+        status=SubscriptionStatus.ACTIVE,
+        created_at=now,
+    )
+    db.add(sub)
+    await db.flush()
+
+    # Initialise bundle balances
+    if product and product.allowances:
+        svc_map = {
+            "data_mb":    ServiceType.DATA,
+            "voice_mins": ServiceType.VOICE,
+            "sms":        ServiceType.SMS,
+        }
+        for field, svc in svc_map.items():
+            total = product.allowances.get(field)
+            if not total:
+                continue
+            bb = BundleBalance(
+                id=str(uuid.uuid4()),
+                subscription_id=sub.id,
+                period_start=today,
+                period_end=period_end,
+                service_type=svc,
+                allowance_total=total,
+                allowance_used=0,
+                allowance_remaining=total,
+            )
+            db.add(bb)
+
+    await db.flush()
+    log.info(f"Subscription created after provisioning: {sub.id}")
 
 async def trigger_deprovision(
     db: AsyncSession,

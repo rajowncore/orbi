@@ -1,6 +1,7 @@
 """
 Orbi Billing — FastAPI application entry point.
 """
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,7 @@ from app.routers import (
     subscriptions, usage, invoices, payments, billing_runs,
     billing_runs_v2, invoice_pdf, subscription_bundles, provisioning
 )
+from app.routers.self_care import router as self_care_router
 
 PDF_DIR = Path(__file__).parent.parent / "pdfs"
 PDF_DIR.mkdir(exist_ok=True)
@@ -41,20 +43,43 @@ async def lifespan(app: FastAPI):
         # Initialise OCS engine based on OCS_MODE config
         from app.engine import init_engine_from_config
         ocs = init_engine_from_config()
-        _log.info(f"Orbi started — OCS engine: {ocs.get_name()}")
+        _log.info(f"Orbi started (worker pid={os.getpid()}) — OCS: {ocs.get_name()}")
 
-        # Health check CGRateS if active
+        # Health check CGRateS if active + setup action triggers
         from app.engine.cgrates import CGRatesChargingEngine
         if isinstance(ocs, CGRatesChargingEngine):
             health = await ocs.health_check()
             _log.info(f"CGRateS health: {health}")
-            if health["status"] != "ok":
-                _log.warning(
+            
+            # Setup webhook action triggers (idempotent — safe to run every startup)
+        if health["status"] == "ok":
+            orbi_url = settings.ORBI_PUBLIC_URL or "http://backend:8000"
+            from app.services.cgrates_triggers import setup_cgrates_action_triggers
+            try:
+                await setup_cgrates_action_triggers(
+                    cgrates_url=settings.CGRATES_API_URL,
+                    tenant=settings.CGRATES_TENANT,
+                    orbi_webhook_url=f"{orbi_url}/api/v1/self-care/webhooks/cgrates",
+                )
+            except Exception as e:
+                _log.warning(f"CGRateS trigger setup failed (non-fatal): {e}")
+        else:
+            _log.warning(
                     "CGRateS is unreachable at startup. "
                     "Rating and billing will fail until CGRateS is available. "
                     "Check CGRATES_API_URL in .env"
                 )
+        
+        # Start background scheduler (balance polls)
+        if settings.OCS_MODE == "cgrates":
+            from app.scheduler import start_scheduler
+            await start_scheduler(poll_interval_minutes=settings.BALANCE_POLL_INTERVAL_MINUTES)
+                
     yield
+    
+    # Shutdown scheduler cleanly
+    from app.scheduler import stop_scheduler
+    await stop_scheduler()
 
 
 app = FastAPI(
@@ -87,11 +112,14 @@ app.include_router(usage.router,                 prefix=PREFIX)
 app.include_router(invoices.router,              prefix=PREFIX)
 app.include_router(payments.router,              prefix=PREFIX)
 
-# Sprint 4 routers (replace billing_runs stub)
+# Sprint 4 routers
 app.include_router(billing_runs_v2.router,       prefix=PREFIX)
 app.include_router(invoice_pdf.router,           prefix=PREFIX)
 app.include_router(subscription_bundles.router,  prefix=PREFIX)
 app.include_router(provisioning.router,          prefix=PREFIX)
+
+# Self-care
+app.include_router(self_care_router, prefix=PREFIX)
 
 @app.get("/health")
 async def health():

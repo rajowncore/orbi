@@ -95,8 +95,6 @@ class WorkflowRunner:
             )
         )
 
-        print(ProvisioningWorkflow.steps)
-
         existing = r.scalars().first()
         #existing = r.scalar_one_or_none()
 
@@ -129,11 +127,6 @@ class WorkflowRunner:
         """Execute steps sequentially. Roll back on any failure."""
 
         await db.refresh(workflow, ["steps"])
-
-        completed_steps = {
-            s.step_name for s in workflow.steps
-            if s.status == StepStatus.COMPLETED
-        }
 
         # Find which steps already completed (for resume)
         completed_steps = {
@@ -179,7 +172,7 @@ class WorkflowRunner:
                 result = await fn(workflow.context, self.hss, self.cgrates)
                 # Step fn returns a dict of values to merge into context
                 if isinstance(result, dict):
-                    workflow.context.update(result)
+                    workflow.context = {**workflow.context, **result}
                     await db.flush()
 
                 step.status       = StepStatus.COMPLETED

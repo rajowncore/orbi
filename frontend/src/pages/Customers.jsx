@@ -17,6 +17,7 @@ import {
 } from '../components/ui'
 import { CreateCustomerModal } from '../components/modals/CreateCustomerModal'
 import { CreateOrderModal } from '../components/modals/CreateOrderModal'
+import { useToast } from '../components/ui/Toast'												 
 import { ProvisioningPanel } from '../components/ProvisioningPanel'
 import { RecordPaymentModal } from '../components/modals/RecordPaymentModal'
 
@@ -202,7 +203,7 @@ export function CustomerDetailPage() {
   const { id } = useParams()
   const nav    = useNavigate()
   const qc     = useQueryClient()
-
+  const toast  = useToast()
   const [showOrder, setShowOrder] = useState(false)
   const [showEdit,  setShowEdit]  = useState(false)
   const [confirm,   setConfirm]   = useState(null)
@@ -210,6 +211,7 @@ export function CustomerDetailPage() {
   const [showPayment, setShowPayment] = useState(false)
   const [showBillingRun, setShowBillingRun] = useState(false)
   const [billingResult, setBillingResult] = useState(null)
+  const [actionError, setActionError] = useState(null)
   
   const { data: customer, isLoading } = useQuery({ queryKey: ['customer', id], queryFn: () => customersApi.get(id) })
   const { data: custOrders   = [] }   = useQuery({ queryKey: ['customer-orders', id],   queryFn: () => customersApi.orders(id) })
@@ -237,7 +239,12 @@ export function CustomerDetailPage() {
   // Activate a pending order
   const activateOrderMut = useMutation({
     mutationFn: (orderId) => ordersApi.action(orderId, 'activate'),
-    onSuccess: invalidate,
+    onSuccess: () => { invalidate(); setActionError(''); toast.success('Order activated successfully') },
+    onError: (err) => {
+      const msg = typeof err === 'string' ? err : (err?.message || 'Activation failed')
+      setActionError(msg)
+      toast.error(`Activation failed: ${msg}`)
+    },
   })
 
   // Subscription actions — routed through the order (backend couples them for now)
@@ -247,7 +254,17 @@ export function CustomerDetailPage() {
       if (!sub?.order_id) throw new Error('No order found for subscription')
       return ordersApi.action(sub.order_id, action)
     },
-    onSuccess: () => { invalidate(); setConfirm(null) },
+    onSuccess: (_, vars) => {
+      invalidate(); setConfirm(null); setActionError('')
+      const labels = { activate: 'reactivated', suspend: 'suspended', cancel: 'cancelled' }
+      toast.success(`Subscription ${labels[vars.action] || vars.action}`)
+    },
+    onError: (err) => {
+      const msg = typeof err === 'string' ? err : (err?.message || 'Action failed')
+      setConfirm(null)
+      setActionError(msg)
+      toast.error(msg)
+    },
   })
 
   if (isLoading) return <div className="flex-1 flex items-center justify-center"><Spinner size={32}/></div>
@@ -293,6 +310,17 @@ export function CustomerDetailPage() {
       </div>
 
 
+		{/* Action error banner */}
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4 mb-4 flex items-start gap-3">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.5" strokeLinecap="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-red-800">Action failed</div>
+            <div className="text-sm text-red-700 mt-0.5">{actionError}</div>
+          </div>
+          <button onClick={()=>setActionError('')} className="text-red-400 hover:text-red-600">×</button>
+        </div>
+      )}						 
       {/* Billing run result */}
       {billingResult && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4 mb-4">

@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     SFTP_DROP_PATH:           str = "/drop"
     SFTP_ARCHIVE_PATH:        str = "/archive"
     SFTP_POLL_INTERVAL_SECONDS: int = 300
+    
+    # Self-care + alerts
+    ORBI_PUBLIC_URL: str = "http://localhost:5173/"   # used in CGRateS webhook URL
+    BALANCE_POLL_INTERVAL_MINUTES: int = 15           # how often to poll CGRateS balances
+    LOW_BALANCE_THRESHOLD_PENCE: int = 500            # £5.00 — alert threshold
 
     @property
     def using_cgrates(self) -> bool:

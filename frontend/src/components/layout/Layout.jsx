@@ -1,5 +1,6 @@
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../lib/auth'
+import { GlobalSearch } from '../GlobalSearch'											  
 import { clsx } from '../../lib/utils'
 
 const nav = [
@@ -76,7 +77,12 @@ export default function Layout() {
             </Link>
           ))}
         </div>
-
+		
+		{/* Search */}
+        <div className="px-3 pb-2">
+          <GlobalSearch/>
+        </div>
+		
         {/* Footer */}
         <div className="mt-auto px-3 py-3 border-t border-white/5">
           <div className="flex items-center gap-2.5 px-2.5 py-2">

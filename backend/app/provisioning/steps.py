@@ -35,6 +35,7 @@ Ctx = dict[str, Any]
 # PROVISION STEPS
 # ══════════════════════════════════════════════════════════════════════════
 
+# HSS Steps
 async def resolve_inventory(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> dict:
     """
     Validate required inventory fields are present in context.
@@ -139,13 +140,13 @@ async def hss_revert_subscriber(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesA
         await hss.revert_subscriber_to_dormant(sub_id, imsi)
         log.info(f"  Reverted HSS subscriber {sub_id} to dormant")
 
-
+### CGRateS Steps
 async def cgrates_create_enum(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> dict:
     """Create E164/ENUM routing entry in CGRateS."""
     result = await cgrates.create_enum_entry(ctx["service_uuid"], ctx["msisdn"])
     if not result.ok:
         raise RuntimeError(f"CGRateS ENUM creation failed: {result.error}")
-    return {}
+    return {"Result": result.result}
 
 
 async def cgrates_delete_enum(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> None:
@@ -163,7 +164,7 @@ async def cgrates_create_filter(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesA
     )
     if not result.ok:
         raise RuntimeError(f"CGRateS filter creation failed: {result.error}")
-    return {}
+    return {"Result": result.result}
 
 
 async def cgrates_delete_filter(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> None:
@@ -179,7 +180,7 @@ async def cgrates_create_attributes(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRa
     )
     if not result.ok:
         raise RuntimeError(f"CGRateS attributes creation failed: {result.error}")
-    return {}
+    return {"Result": result.result}
 
 
 async def cgrates_delete_attributes(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> None:
@@ -193,7 +194,7 @@ async def cgrates_create_resources(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRat
     result = await cgrates.create_resources(ctx["service_uuid"])
     if not result.ok:
         raise RuntimeError(f"CGRateS resources creation failed: {result.error}")
-    return {}
+    return {"Result": result.result}
 
 
 async def cgrates_delete_resources(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> None:
@@ -207,7 +208,7 @@ async def cgrates_create_stats(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAd
     result = await cgrates.create_stats(ctx["service_uuid"])
     if not result.ok:
         raise RuntimeError(f"CGRateS stats creation failed: {result.error}")
-    return {}
+    return {"Result": result.result}
 
 
 async def cgrates_delete_stats(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> None:
@@ -221,9 +222,10 @@ async def cgrates_create_account(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRates
     is_prepaid = ctx.get("is_prepaid", False)
     result = await cgrates.create_account(ctx["service_uuid"],
                                            allow_negative=not is_prepaid)
+    print(result)  # DEBUG
     if not result.ok:
         raise RuntimeError(f"CGRateS account creation failed: {result.error}")
-    return {}
+    return {"Result": result.result}
 
 
 async def cgrates_delete_account(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> None:
@@ -245,7 +247,7 @@ async def cgrates_set_balance(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAda
     )
     if not result.ok:
         raise RuntimeError(f"CGRateS balance init failed: {result.error}")
-    return {}
+    return {"Result": result.result}
 
 
 async def orbi_assign_inventory(ctx: Ctx, hss: OmniHSSAdapter, cgrates: CGRatesAdapter) -> dict:

@@ -4,7 +4,8 @@ Orbi — FastAPI routers. All endpoints use Pydantic schemas and service layer.
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
-
+from fastapi import BackgroundTasks
+from app.database import AsyncSessionLocal
 import logging
 
 # This grabs the existing logger Uvicorn is already using
@@ -33,6 +34,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload, joinedload
 from fastapi import HTTPException
+from app.config import settings
 
 from app.models import (
     Subscription, UsageEvent, Invoice, BalanceLedger,Product,
@@ -155,7 +157,7 @@ class inventory:
             # Re-raise so FastAPI handles the error response
             if isinstance(e, HTTPException):
                 raise e
-            raise HTTPException(status_code=500, detail="Internal Database Error")
+            raise HTTPException(status_code=500, detail=f"Internal Database Error: {str(e)}")
 
     @router.post("/bulk", response_model=InventoryBulkResult, status_code=201)
     async def bulk_import(body: InventoryBulkCreate, db: AsyncSession = Depends(get_db)):
@@ -171,7 +173,7 @@ class inventory:
             # Re-raise so FastAPI handles the error response
             if isinstance(e, HTTPException):
                 raise e
-            raise HTTPException(status_code=500, detail="Internal Database Error")
+            raise HTTPException(status_code=500, detail=f"Internal Database Error: {str(e)}")
 
     @router.get("/available", response_model=list[InventoryItemOut])
     async def available_items(type: Optional[str] = None, db: AsyncSession = Depends(get_db)):
@@ -206,27 +208,59 @@ class orders:
             # Re-raise so FastAPI handles the error response
             if isinstance(e, HTTPException):
                 raise e
-            raise HTTPException(status_code=500, detail="Internal Database Error")
+            raise HTTPException(status_code=500, detail=f"Internal Database Error: {str(e)}")
 
     @router.get("/{order_id}", response_model=OrderOut)
     async def get_order(order_id: str, db: AsyncSession = Depends(get_db)):
         return await order_svc.get_order(db, order_id)
 
     @router.patch("/{order_id}", response_model=OrderOut)
-    async def update_order(order_id: str, body: OrderAction, db: AsyncSession = Depends(get_db)):
+    async def update_order(
+        order_id: str, 
+        body: OrderAction, 
+        background_tasks: BackgroundTasks,
+        db: AsyncSession = Depends(get_db)):
         try:
             update_order = await order_svc.apply_action(db, order_id, body.action)
-
-            await db.commit()
             await db.refresh(update_order)
+            #await db.commit()
+
+            # Async version (recommended for production) — triggers provisioning but doesn't wait for it to complete before responding
+            # Auto-trigger provisioning when order is activated
+            if body.action == "activate" and update_order.status.value == "active":
+            
+                if settings.provisioning_configured:
+                    from app.provisioning.service import trigger_provision
+                    
+                    async def _run_provisioning():
+                        # Fresh session — the request session is closed by the time this runs
+                        async with AsyncSessionLocal() as bg_db:
+                            from app.models import Order
+                            from sqlalchemy import select
+                            r = await bg_db.execute(
+                                select(Order).where(Order.id == order_id)
+                            )
+                            order = r.scalar_one_or_none()
+                            
+                            if order:
+                                await trigger_provision(bg_db, order)
+                                await bg_db.commit()
+    
+                    background_tasks.add_task(_run_provisioning)
+            
+            # sync version (blocks HTTP response until provisioning completes, not recommended for production)
+            # if body.action == "activate" and update_order.status.value == "active":
+            #     from app.config import settings
+            #     if settings.provisioning_configured:
+            #         from app.provisioning.service import trigger_provision
+            #         await trigger_provision(db, update_order)
+
             return update_order
+        except HTTPException:
+            raise
         except Exception as e:
-            # If anything failed (uniqueness, network, etc.), wipe the slate clean
             await db.rollback()
-            # Re-raise so FastAPI handles the error response
-            if isinstance(e, HTTPException):
-                raise e
-            raise HTTPException(status_code=500, detail="Internal Database Error")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ══════════════════════════════════════════════════════════════════════════
 # SUBSCRIPTIONS
@@ -575,6 +609,7 @@ def _workflow_out(wf) -> dict:
         "order_id":       wf.order_id,
         "workflow_type":  wf.workflow_type,
         "status":         wf.status,
+        "context":        wf.context,
         "error_message":  wf.error_message,
         "error_step":     wf.error_step,
         "created_at":     wf.created_at.isoformat() if wf.created_at else None,
@@ -584,6 +619,8 @@ def _workflow_out(wf) -> dict:
                 "step_name":     s.step_name,
                 "description":   s.step_description,
                 "status":        s.status,
+                "attempt":       s.attempt,      # ← add this
+                "result":        s.result,        # ← add this
                 "error_message": s.error_message,
                 "started_at":    s.started_at.isoformat() if s.started_at else None,
                 "completed_at":  s.completed_at.isoformat() if s.completed_at else None,
